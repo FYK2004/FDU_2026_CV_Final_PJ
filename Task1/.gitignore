@@ -1,9 +1,9 @@
 external/
 outputs/
-data/**/*
-!data/**/.gitkeep
-!data/README.md
-!data/object_c/**
+data/object_a/images/*
+!data/object_a/images/.gitkeep
+data/background/**
+!data/background/bicycle/images/.gitkeep
 __pycache__/
 *.pyc
 .env

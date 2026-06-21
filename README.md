@@ -11,19 +11,56 @@ final_pj/
 └── Task2/          # 题目二
 ```
 
-## Requirements
+## 环境要求
 
-| 任务 | 环境 | 安装 |
-|------|------|------|
-| 题目一 | `task1-tools` / `task1-2dgs` / `task1-threestudio` | `cd Task1 && bash scripts/setup_env.sh` |
-| 题目二 | `task2-lerobot` | `cd Task2 && bash scripts/setup.sh` |
+| 项目 | 要求 |
+|------|------|
+| GPU | NVIDIA，建议 ≥24GB 显存 |
+| 系统 | Linux，已安装 [Conda](https://docs.conda.io/) |
+| 题目一额外依赖 | COLMAP、Blender（B/C 多视角渲染） |
+| 题目一配置文件 | `Task1/environment/*.yml`、`Task1/requirements.txt` |
+| 题目二配置文件 | `Task2/requirements.txt`、`Task2/config/task2.yaml` |
 
-- GPU：NVIDIA（建议 ≥24GB）
-- 题目一额外依赖：COLMAP、Blender、`Task1/environment/*.yml`、`Task1/requirements.txt`
-- 题目二依赖：`Task2/requirements.txt`
-- 配置文件：`Task1/config/task1.yaml`、`Task2/config/task2.yaml`
+## 环境配置
 
-详细步骤见 [`Task1/README.md`](Task1/README.md)、[`Task2/README.md`](Task2/README.md)。
+**题目一**
+
+```bash
+cd Task1
+chmod +x scripts/*.sh
+bash scripts/setup_env.sh    # 创建 conda 环境 + 克隆第三方仓库 + 编译 2DGS
+```
+
+将创建 `task1-tools`、`task1-2dgs`、`task1-threestudio` 等环境（约 20–40 分钟，需 GPU 与网络）。
+
+**题目二**
+
+```bash
+cd Task2
+bash scripts/setup.sh
+conda activate task2-lerobot
+```
+
+详细说明见 [`Task1/README.md`](Task1/README.md)、[`Task2/README.md`](Task2/README.md)。
+
+## 数据集下载
+
+**题目一**（需手动准备，见 Task1 README）：
+
+- 物体 A：自备多视角照片 → `Task1/data/object_a/images/`
+- 物体 C：仓库已含 `teddy_rgba.png`，链至 `rgba.png` 即可
+- 背景：下载 [Mip-NeRF 360](http://storage.googleapis.com/gresearch/refraw360/360_v2.zip)，解压 `bicycle/` 至 `Task1/data/background/bicycle/images/`
+- AIGC 模型：Stable Diffusion v1.5、Zero123（首次运行 threestudio 时从 HuggingFace 自动下载）
+
+**题目二**（脚本自动下载）：
+
+```bash
+cd Task2
+conda activate task2-lerobot
+bash scripts/prepare_data.sh
+```
+
+从 HuggingFace [`xiaoma26/calvin-lerobot`](https://huggingface.co/datasets/xiaoma26/calvin-lerobot) 下载 splitB/D、合并 ABC、转 video 并划分 episode。需能访问 HuggingFace（必要时 `huggingface-cli login`）。
 
 ## Train
 

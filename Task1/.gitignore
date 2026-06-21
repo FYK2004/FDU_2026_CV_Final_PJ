@@ -1,0 +1,13 @@
+external/
+outputs/
+data/**/*
+!data/**/.gitkeep
+!data/README.md
+!data/object_c/**
+__pycache__/
+*.pyc
+.env
+*.ckpt
+*.pth
+wandb/
+.DS_Store

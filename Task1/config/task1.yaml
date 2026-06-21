@@ -1,0 +1,105 @@
+external:
+  dgs2d: external/2d-gaussian-splatting
+  threestudio: external/threestudio
+  magic123: external/Magic123
+object_c:
+  image_input: data/object_c/teddy_rgba.png
+  image_rgba: data/object_c/rgba.png
+  prompt: a teddy bear
+  pipeline: magic123
+  output_dir: outputs/object_c
+  gpu: 0
+  coarse_config: external/threestudio/configs/magic123-coarse-hifa.yaml
+  refine_config: external/threestudio/configs/magic123-refine-car.yaml
+  sd_model: runwayml/stable-diffusion-v1-5
+  coarse_steps: 5000
+  refine_steps: 5000
+  refine_export_threshold: 25.0
+  refine_export_resolution: 128
+  repair_mode: merge
+  texture_size: 2048
+  coarse_export_threshold: 35.0
+  coarse_export_method: mc-cpu
+  coarse_export_resolution: 256
+  outlier_threshold: 0.02
+  seed: 0
+  train_2dgs:
+    enabled: true
+    iterations: 10000
+    resolution: 512
+    num_azimuth: 24
+    elevations_deg:
+    - -15
+    - 15
+    - 45
+    radius_scale: 2.8
+    fov_deg: 50
+object_a:
+  images_dir: data/object_a/images
+  output_dir: outputs/object_a
+  gpu: 0
+  train:
+    iterations: 30000
+    image_scale: 1.0
+object_b:
+  prompt: a hamburger
+  output_dir: outputs/object_b
+  gpu: 0
+  config: configs/dreamfusion-sd-hq.yaml
+  max_steps: 12000
+  train_2dgs:
+    enabled: true
+    iterations: 10000
+    resolution: 512
+    num_azimuth: 24
+    elevations_deg:
+    - -15
+    - 15
+    - 45
+    radius_scale: 2.8
+    fov_deg: 50
+background:
+  scene: bicycle
+  data_root: data/background
+  output_dir: outputs/background
+  train:
+    iterations: 30000
+    image_scale: 1.0
+fusion:
+  output_dir: outputs/fusion
+  camera:
+    num_frames: 120
+    radius: 3.0
+    height: 1.2
+    fov: 50
+  placements:
+    object_a:
+      position:
+      - 0.9671
+      - 1.2
+      - 1.1812
+      rotation_euler:
+      - 0
+      - 0
+      - 90
+      scale: 0.55
+    object_b:
+      position:
+      - 0.6231
+      - 1
+      - 0.3855
+      rotation_euler:
+      - 90
+      - -90
+      - 90
+      scale: 0.24
+    object_c:
+      position:
+      - 0.3096
+      - 0.2
+      - -0.0969
+      rotation_euler:
+      - 90
+      - -90
+      - 90
+      scale: 0.3

@@ -1,0 +1,8 @@
+# Task1 辅助工具依赖（2DGS/threestudio/Magic123 需各自 conda 环境）
+pyyaml>=6.0
+numpy>=1.24
+opencv-python>=4.8
+Pillow>=10.0
+tqdm>=4.66
+rembg>=2.0.50
+onnxruntime>=1.16

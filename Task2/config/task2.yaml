@@ -1,0 +1,55 @@
+# Task2 全局配置
+
+project:
+  name: "hw3_task2"
+  seed: 42
+
+dataset:
+  # HuggingFace 源仓库（含 splitA/B/C/D 子目录）
+  hf_repo: "xiaoma26/calvin-lerobot"
+  # 本地转换后的 LeRobot v3 数据根目录（其下为 splitA、splitB、splitC、splitD）
+  root: "data/calvin-lerobot"
+  repo_id: "xiaoma26/calvin-lerobot"  # 仅作文档标识
+  # convert_to_video.py --replace-source 后数据仍为 splitB 等原名，dtype 变为 video
+  video_backend: "pyav"  # torchcodec 需 FFmpeg 共享库，本机用 pyav
+
+environments:
+  # CALVIN 场景标识（用于 episodes 过滤，见 meta/info.json）
+  train_b: ["B"]
+  train_abc: ["A", "B", "C"]
+  eval_zero_shot: ["D"]
+
+# CALVIN 数据集字段 -> LeRobot ACT 标准命名
+rename_map:
+  image: "observation.images.image"
+  wrist_image: "observation.images.wrist_image"
+  state: "observation.state"
+  actions: "action"
+
+training:
+  policy: "act"
+  device: "cuda"
+  batch_size: 16
+  num_workers: 12          # 视频解码 + 128 核 CPU
+  steps: 50000          # 调试可改 5000；正式实验加大
+  eval_freq: 5000
+  save_freq: 10000
+  log_freq: 100
+  # 两阶段必须使用相同 ACT 架构与超参（作业要求）
+  chunk_size: 100
+  n_action_steps: 100
+  lr: 1.0e-5             # 与 ACT preset 实际值一致
+  optimizer: "adamw"
+  use_amp: true          # 混合精度，略加速前向/反向
+
+wandb:
+  enable: true
+  mode: "online"
+  project: "hw3_task2_act"
+  entity: "fangyk-fudan-university-school-of-management"
+  notes: "video+pyav 50k steps"  # 便于区分本次正式跑
+
+outputs:
+  env_b: "outputs/train/act_env_b_only"
+  env_abc: "outputs/train/act_env_abc"
+  eval_d: "outputs/eval/zero_shot_env_d"

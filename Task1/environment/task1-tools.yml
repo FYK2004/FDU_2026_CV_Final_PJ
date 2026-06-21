@@ -1,0 +1,14 @@
+name: task1-tools
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - ffmpeg
+  - colmap
+  - pyyaml
+  - numpy
+  - opencv
+  - pillow
+  - tqdm

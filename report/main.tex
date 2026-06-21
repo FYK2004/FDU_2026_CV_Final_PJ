@@ -1,0 +1,426 @@
+% HW3 计算机视觉实验报告 — CVPR 模板
+% 编译：xelatex main.tex && bibtex main && xelatex main.tex && xelatex main.tex
+
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage[review]{cvpr}
+\usepackage{times}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{adjustbox}
+\usepackage{fvextra}
+\usepackage{hyperref}
+\usepackage{ctex}
+
+\cvprfinalcopy
+
+\def\cvprPaperID{****}
+
+% 插图搜索路径（Figure 3/5 等）
+\graphicspath{{figures/}{figures/fusion/}{../Task2/outputs/eval/zero_shot_env_d/}}
+
+% 单栏表格：宽度 = 当前栏 \linewidth，单元格自动换行
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcommand{\cvprtable}[1]{%
+  \scriptsize
+  \setlength{\tabcolsep}{2.5pt}%
+  \renewcommand{\arraystretch}{1.08}%
+  #1%
+}
+
+\begin{document}
+
+\title{基于 2D Gaussian Splatting 与 LeRobot ACT 的\\多源三维重建融合与跨环境策略学习}
+
+\author{【姓名】\\
+【学号】\\
+复旦大学\\
+{\tt\small 【email@fudan.edu.cn】}
+}
+
+\maketitle
+
+\begin{abstract}
+本文完成 HW3 计算机视觉课程两项实验。
+\textbf{题目一}：从真实多视角图像（物体 A）、文本 Prompt（物体 B）、单张 RGBA（物体 C）三条路径重建三维资产；在 Mip-NeRF 360 \texttt{bicycle} 场景训练 2D Gaussian Splatting（2DGS）背景；将背景与 A/B/C \textbf{全部表示为 2D 高斯}并在统一坐标系下合并光栅化，输出环视视频 \texttt{wander.mp4}。
+AIGC 资产先得到显式 mesh，再经多视角渲染与 2DGS 微调，与真实拍摄路径在\textbf{同一高斯域}融合。
+\textbf{题目二}：基于 LeRobot 在 CALVIN 上训练 Action Chunking Transformer（ACT），分别在环境 B 与 A+B+C 上训练，于未见环境 D 零样本评测。
+ABC 联合训练在离线 Success Rate 代理指标上由 74\% 提升至 97\%，Action Chunking 长程 L1 更平稳。
+代码与权重链接见文末。
+\end{abstract}
+
+\section{引言}
+\label{sec:intro}
+
+本文按作业要求组织为两道独立实验，每题均包含：\textbf{任务背景}、\textbf{数据集描述}、\textbf{方法原理}、\textbf{表格化实验设置}、\textbf{实验结果与现象分析}。
+题目一对比 COLMAP+2DGS、threestudio SDS、Magic123 三种重建路径，说明 mesh/隐式场与 2DGS 的统一合并渲染，并生成融合漫游视频。
+题目二在 CALVIN 环境 B 与 A+B+C 上训练相同 ACT，于环境 D 零样本测试，报告 Success Rate、Action L1 Loss，并分析 Action Chunking 与 Visual Distribution Shift。
+
+\section{相关工作}
+\label{sec:related}
+
+2D Gaussian Splatting~\cite{huang2024dgs} 以 2D 面片提升几何精度；DreamFusion~\cite{poole2023dreamfusion} 用 SDS 实现文本到三维；Magic123~\cite{qian2023magic123} 从单图生成 mesh；Mip-NeRF 360~\cite{barron2022mipnerf360} 提供无界真实场景；ACT~\cite{zhao2023act} 通过动作块预测缓解误差累积；CALVIN~\cite{mees2022calvin} 提供 A/B/C/D 多桌面操作划分；LeRobot 提供统一模仿学习接口。
+
+\section{题目一：多源 3D 重建与场景融合}
+\label{sec:task1}
+
+\subsection{任务背景}
+\label{sec:task1_bg}
+
+真实场景三维重建与 AIGC 内容生成正在融合：NeRF / Gaussian Splatting 可从多视角照片恢复高质量场景，而 DreamFusion、Magic123 等可从文本或单图生成物体 mesh。
+本题目要求在同一真实背景（Mip-NeRF 360 \texttt{bicycle}）中，将\textbf{三条异构输入路径}（实拍多视角、文本 Prompt、单张 RGBA）得到的物体 A/B/C 与背景统一渲染，并输出环视漫游视频。
+核心难点在于：mesh、隐式场与 2D 高斯属于不同表示，需设计\textbf{统一表达与融合管线}，同时对比三种路径在几何精度、纹理质量与耗时上的差异。
+
+\subsection{数据集描述}
+\label{sec:task1_data}
+
+\begin{table}[t]
+  \centering
+  \caption{题目一数据集与资产来源。}
+  \label{tab:task1_dataset}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYY@{}}
+    \toprule
+    组件 & 来源 / 规模 & 用途 \\
+    \midrule
+    背景 & Mip-NeRF 360 \texttt{bicycle}，COLMAP 稀疏重建 + 多视角 JPEG & 2DGS 背景训练 \\
+    物体 A & 自采 72 张（$2272{\times}1704$）环绕实拍 & COLMAP + 2DGS \\
+    物体 B & 文本 \texttt{"a hamburger"}，无真实图像 & threestudio SDS \\
+    物体 C & 单张 \texttt{teddy\_rgba.png}（RGBA） & Magic123 单图重建 \\
+    融合相机 & 合成 120 帧环视轨迹（非训练集视角） & \texttt{wander.mp4} \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+背景数据来自公开 benchmark，物体 A 为课程指定实拍序列；B/C 均无真实多视角观测，几何由生成模型\textbf{先验补全}，融合环视中更易出现尺度或细节不一致。
+坐标系与 COLMAP 一致（$Y$ 向上）；位姿标定依赖 \texttt{task1.yaml} 中手动配置的 \texttt{fusion.placements}。
+
+\subsection{方法原理}
+\label{sec:task1_method}
+
+\textbf{2D Gaussian Splatting（2DGS）}~\cite{huang2024dgs}：用定向 2D 高斯面片替代 3D 椭球，通过可微光栅化同时优化位置、法向、尺度与球谐系数，在表面几何上较 3DGS 更精确。
+
+\textbf{路径 A（实拍）}：COLMAP 估计相机位姿与稀疏点云，再以 2DGS 对多视角 photometric loss 做优化，直接得到高斯表示。
+
+\textbf{路径 B（文本 SDS）}~\cite{poole2023dreamfusion}：DreamFusion 通过 Score Distillation Sampling（SDS）将 2D 扩散模型梯度蒸馏到 NeRF/网格，从 Prompt 优化出三维形状，经 threestudio 导出为带 UV 的 \texttt{model.obj}。
+
+\textbf{路径 C（单图 Magic123）}~\cite{qian2023magic123}：结合 Stable Diffusion 与 Zero123 多视角先验，coarse 阶段粗几何、refine 阶段细化纹理，经 mesh-exporter 导出为与 B \textbf{相同格式}的 obj+UV 资产（顶点规模约 3.5 万）。
+
+\textbf{统一融合（本实验最终方案）}：A 直接使用 2DGS；B/C 的 mesh 经 Blender 72 视角渲染后各训练 2DGS，与背景在同一高斯域做刚体变换并 \texttt{torch.cat} 合并，\textbf{单次光栅化}输出视频（图~\ref{fig:pipeline}），避免 mesh 与 2DGS 光照不一致。
+
+\begin{figure}[t]
+  \centering
+  \fbox{\parbox{0.92\linewidth}{\small
+  \textbf{全 2DGS 融合流水线}\\
+  背景 2DGS + 物体 A 2DGS + 物体 B/C 训练 2DGS\\
+  $\downarrow$ 裁剪、中心化、\texttt{apply\_placement}\\
+  \texttt{torch.cat} 合并高斯 $\rightarrow$ 单次光栅化 $\rightarrow$ \texttt{wander.mp4}
+  }}
+  \caption{题目一融合管线：多源资产统一为 2D 高斯后合并渲染。}
+  \label{fig:pipeline}
+\end{figure}
+
+\subsection{实验设置}
+\label{sec:task1_setup}
+
+\begin{table}[t]
+  \centering
+  \caption{题目一实验环境与软件配置。}
+  \label{tab:task1_env}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lY@{}}
+    \toprule
+    项目 & 配置 \\
+    \midrule
+    硬件 & Linux，NVIDIA A100-SXM4-80GB \\
+    2DGS 环境 & Conda \texttt{llm-26}，\texttt{2d-gaussian-splatting} \\
+    AIGC 环境 & Conda \texttt{task1-threestudio}（threestudio / Magic123） \\
+    配置管理 & \texttt{Task1/config/task1.yaml} \\
+    融合脚本 & \texttt{compose\_fusion\_2dgs.py} \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{题目一各子任务训练与生成设置。}
+  \label{tab:task1_train}
+  \cvprtable{%
+  \setlength{\tabcolsep}{2pt}%
+  \renewcommand{\arraystretch}{1.12}%
+  \begin{tabularx}{\linewidth}{@{}>{\raggedright\arraybackslash}p{0.11\linewidth} Y Y Y@{}}
+    \toprule
+    子任务 & 方法 & 训练设置 & 输出 \\
+    \midrule
+    背景 & 2DGS & 30k iters，原图分辨率 & ply 点云 \\
+    物体 A & COLMAP+2DGS & 30k iters；融合 ckpt 10k & 2DGS \\
+    物体 B & DreamFusion & SDS 12k steps & obj+UV（同 C） \\
+    物体 C & Magic123 & coarse/refine 各 5k；refine 128px & obj+UV（$\sim$35k 顶） \\
+    B/C 转 2DGS & 72 视渲染+2DGS & 各 10k iters，512px & $\sim$20--23k 高斯 \\
+    \bottomrule
+  \end{tabularx}%
+  }
+  \vspace{1pt}
+  {\footnotesize B/C 初始资产均为 \texttt{model.obj}、\texttt{model.mtl}、\texttt{texture\_kd.png}；C 顶点约 3.5 万。融合前经 72 视渲染 + 2DGS 转为 ply。}
+\end{table}
+
+融合阶段：120 帧环视，$r{=}3.0$，$h{=}1.2$，FOV $50^\circ$，输出 $1280{\times}850$，24\,fps；各物体位姿见表~\ref{tab:placement}。
+
+\begin{table}[t]
+  \centering
+  \caption{融合场景物体位姿（\texttt{task1.yaml}，$Y$ 向上）。}
+  \label{tab:placement}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYYcY@{}}
+    \toprule
+    物体 & Position & Rot.\ ($^\circ$) & Scale & 语义 \\
+    \midrule
+    A 狗 & \scriptsize $[0.97, 1.20, 1.18]$ & \scriptsize $[0,0,90]$ & 0.55 & 地面 \\
+    B 汉堡 & \scriptsize $[0.62, 1.00, 0.39]$ & \scriptsize $[90,-90,90]$ & 0.24 & 椅面 \\
+    C 熊 & \scriptsize $[0.31, 0.20, -0.10]$ & \scriptsize $[90,-90,90]$ & 0.30 & 车座 \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+\subsection{实验结果与分析}
+\label{sec:task1_results}
+
+\begin{table}[t]
+  \centering
+  \caption{三种重建路径定性对比。}
+  \label{tab:task1_compare}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYYY@{}}
+    \toprule
+    维度 & A (实拍) & B (SDS) & C (Magic123) \\
+    \midrule
+    输入 & 72 张多视角 & 文本 Prompt & 单张 RGBA \\
+    初始资产 & 2DGS 点云 & obj+UV mesh & obj+UV mesh \\
+    几何 & 最高 & 中（先验生成） & 中（单视图歧义） \\
+    纹理 & 真实采集 & Prompt 驱动 & Refine 较细 \\
+    融合表示 & 2D Gaussian & 2DGS$^\dagger$ & 2DGS$^\dagger$ \\
+    相对耗时 & \textbf{低} & \textbf{中} & \textbf{高} \\
+    \bottomrule
+  \end{tabularx}%
+  }
+  \vspace{1pt}
+  {\footnotesize $^\dagger$由 mesh 多视角渲染后 2DGS 训练得到。}
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{三种物体重建墙钟耗时（至初始三维资产；不含融合渲染）。}
+  \label{tab:task1_time}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYYY@{}}
+    \toprule
+    阶段 & A (实拍) & B (SDS) & C (Magic123) \\
+    \midrule
+    主要环节 & COLMAP $\rightarrow$ 2DGS 10k & DreamFusion 12k $\rightarrow$ obj+UV & coarse+refine $\rightarrow$ obj+UV \\
+    COLMAP / SfM & $\sim$19\,min & --- & --- \\
+    优化训练 & 2DGS $\sim$14\,min & SDS $\sim$58\,min$^\ddagger$ & coarse/refine $\sim$24/25\,min$^\ddagger$ \\
+    后处理 & --- & obj+UV 导出 $\sim$5\,min & obj+UV 导出 $\sim$10\,min \\
+    \textbf{合计} & \textbf{$\sim$33\,min} & \textbf{$\sim$63\,min} & \textbf{$\sim$75\,min} \\
+    \bottomrule
+  \end{tabularx}%
+  }
+  \vspace{2pt}
+  {\footnotesize $^\ddagger$步数见 \texttt{task1.yaml}。}
+\end{table}
+
+\textbf{定量与可视化结果}：融合视频 \texttt{Task1/outputs/fusion/wander.mp4}（120 帧，$1280{\times}850$）；合并高斯规模：背景 $\sim$410 万 / A $\sim$25 万 / B $\sim$2.0 万 / C $\sim$2.3 万。
+
+【Figure 2：A/B/C 重建与训练点云可视化】
+
+\begin{figure*}[t]
+  \centering
+  \begin{minipage}{0.24\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{frame_000.png}
+    \subcaption{帧 0}
+  \end{minipage}\hfill
+  \begin{minipage}{0.24\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{frame_030.png}
+    \subcaption{帧 30}
+  \end{minipage}\hfill
+  \begin{minipage}{0.24\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{frame_060.png}
+    \subcaption{帧 60}
+  \end{minipage}\hfill
+  \begin{minipage}{0.24\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{frame_090.png}
+    \subcaption{帧 90}
+  \end{minipage}
+  \caption{融合环视视频 \texttt{wander.mp4} 关键帧（120 帧环视，$1280{\times}850$）。可见椅面汉堡（B）、车座泰迪熊（C）与地面机器狗（A）与 \texttt{bicycle} 背景在同一 2DGS 场景中共存。}
+  \label{fig:fusion_frames}
+\end{figure*}
+
+\textbf{现象分析}：
+（1）\textbf{输入模态决定几何上限}——A 有多视角约束，几何最可靠；B 仅文本 Prompt、全程无真实图像，三维形状与纹理完全由 SDS 先验生成，环视中可能出现与 Prompt 语义偏差或过度平滑；C 仅一张 RGBA，正面可见而后脑与侧面\textbf{确实不可观}，refine 虽改善正面纹理，融合中熊后脑仍可能凹陷或发虚。
+（2）\textbf{耗时与 pipeline 复杂度}——A 瓶颈在 COLMAP 与高清光栅化，无扩散采样，最快（$\sim$33\,min）；B 每步需 SD 梯度回传（$\sim$63\,min）；C 两阶段优化 + Zero123 + mesh 导出最长（$\sim$75\,min）。B/C 转 2DGS 用于融合另各约 20\,min。
+（3）\textbf{统一高斯域的必要性}——早期 Blender mesh 叠加与 Poisson 深度遮挡因尺度不一致与光照模型差异效果不稳定；全 2DGS 合并后外观一致，但 B/C 点云朝向需 \texttt{fix\_gaussian\_ply\_upright.py} 校正，位姿需在 COLMAP 坐标系下反复标定（$Y$ 越大画面越低，椅面与车座高度差显著）。
+
+\section{题目二：LeRobot ACT 跨环境泛化}
+\label{sec:task2}
+
+\subsection{任务背景}
+\label{sec:task2_bg}
+
+具身智能策略需在\textbf{未见环境}中仍可靠执行操作。
+CALVIN~\cite{mees2022calvin} 将桌面操作划分为 A/B/C/D 四套视觉布局，用于研究\textbf{跨环境泛化}与\textbf{Visual Distribution Shift}。
+本题目在 LeRobot 框架下训练 Action Chunking Transformer（ACT）~\cite{zhao2023act}：阶段一仅用环境 B 数据，阶段二用 A+B+C 联合数据；两阶段\textbf{架构与超参完全一致}，于环境 D 做 Zero-shot 评测，并分析 Action Chunking 长程误差与训练 loss 的关系。
+
+\subsection{数据集描述}
+\label{sec:task2_data}
+
+\begin{table}[t]
+  \centering
+  \caption{CALVIN-LeRobot 数据集划分与用途。}
+  \label{tab:task2_dataset}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYY@{}}
+    \toprule
+    Split & 规模（本实验） & 用途 \\
+    \midrule
+    splitA / B / C & 各约 6k episodes & ABC 阶段联合训练 \\
+    splitB & 367k frames，6115 ep. & B-only 单环境训练 \\
+    splitABC\_merged & A+B+C 合并 & 多环境联合训练 \\
+    splitD & 100 ep.，6036 frames & Zero-shot 评测 \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+数据来源：HuggingFace \texttt{xiaoma26/calvin-lerobot}（LeRobot v3）。
+经 \texttt{convert\_to\_video.py} 将图像序列转为 video dtype，解码后端 \texttt{pyav}。
+观测含第三人称 \texttt{image}、腕部 \texttt{wrist\_image}、7 维 \texttt{state}；标签为 7 维连续 \texttt{actions}，训练时重命名为 LeRobot 标准键（见 \texttt{task2.yaml}）。
+
+\subsection{方法原理}
+\label{sec:task2_method}
+
+\textbf{模仿学习}：从专家示教 $(o_t, a_t)$ 学习策略 $\pi(a|o)$，最小化预测动作与真值的偏差。
+
+\textbf{ACT}：用 ResNet-18 编码双视角图像与状态，Transformer 编码器--解码器一次预测长度为 $K{=}100$ 的\textbf{动作块}（action chunk），执行时仅取首步或滑动窗口，以缓解逐步回归的误差累积。
+
+\textbf{损失函数}：L1 回归动作块 + $\lambda$\,KL 约束 VAE 潜变量（$\lambda{=}10$；本实验中 KL 项量级 $\sim 10^{-5}$，优化几乎由 L1 主导）。
+
+\textbf{评测协议}：在未见环境 D 上做\textbf{离线 Action L1}（无 CALVIN 仿真）；Success Rate \textbf{代理}定义为 episode 平均 L1 $< 0.25$ 的比例；另统计 chunk 内各 horizon 的 L1 以分析 Action Chunking。
+
+\subsection{实验设置}
+\label{sec:task2_setup}
+
+\begin{table}[t]
+  \centering
+  \caption{题目二实验环境与 ACT 超参数（两阶段一致）。}
+  \label{tab:act_hparams}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lY@{}}
+    \toprule
+    项目 & 配置 \\
+    \midrule
+    硬件 / 框架 & A100-80GB，LeRobot ACT，WandB \\
+    Network Architecture & ACT (ResNet-18 + Transformer) \\
+    $d_{\mathrm{model}}$ / heads / FFN & 512 / 8 / 3200 \\
+    Encoder / Decoder layers & 4 / 1 \\
+    Chunk size / $n_{\mathrm{action\_steps}}$ & 100 / 100 \\
+    Action dimension & 7 \\
+    Batch size / Optimizer / LR & 16 / AdamW / $10^{-5}$ \\
+    Training steps & 50{,}000 \\
+    Loss & L1 + KL ($\lambda{=}10$)，AMP 启用 \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+\begin{table}[t]
+  \centering
+  \caption{题目二训练阶段与 Zero-shot 评测设置。}
+  \label{tab:task2_protocol}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}lYY@{}}
+    \toprule
+    阶段 & 训练数据 & 输出 checkpoint \\
+    \midrule
+    B-only & \texttt{splitB} & \texttt{act\_env\_b\_only/050000} \\
+    ABC & \texttt{splitABC\_merged} & \texttt{act\_env\_abc/050000} \\
+    评测 & \texttt{splitD}，100 episodes & \texttt{eval/zero\_shot\_env\_d/} \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+WandB 项目：\texttt{hw3\_task2\_act}。
+
+\subsection{实验结果与分析}
+\label{sec:task2_results}
+
+\begin{table}[t]
+  \centering
+  \caption{环境 D Zero-shot 评测结果。}
+  \label{tab:task2_eval}
+  \cvprtable{%
+  \begin{tabularx}{\linewidth}{@{}Ycc@{}}
+    \toprule
+    指标 & B-only & ABC \\
+    \midrule
+    Action L1（首步） & 0.698 & \textbf{0.585} \\
+    Action L1（ep.\ 均值） & 0.216 & \textbf{0.181} \\
+    Success Rate 代理 & 74\% & \textbf{97\%} \\
+    训练终局 L1 loss & 0.120 & 0.149 \\
+    训练时长 (s) & 9496 & 8996 \\
+    \bottomrule
+  \end{tabularx}%
+  }
+\end{table}
+
+【Figure 4：WandB 训练 Loss / L1 曲线（B-only vs ABC）】
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\linewidth]{chunk_l1_by_horizon.png}
+  \caption{环境 D 上 chunk 内各 horizon 的 Action L1（Zero-shot）。B-only 长程漂移更大；ABC 更平稳。}
+  \label{fig:horizon}
+\end{figure}
+
+\textbf{训练曲线分析（Figure 4）}：两实验均在前 1k 步快速下降并收敛。B-only 终局 \texttt{train/l1\_loss}${\approx}0.120$，低于 ABC 的 0.149，说明其在 splitB 上\textbf{拟合更充分}；但 ABC 50k 步仅约 0.75 epoch（数据量更大），训练目标本身更难。关键现象是\textbf{训练 loss 与零样本表现脱钩}：训练更优的 B-only 在环境 D 上首步 L1 更高、Success Rate 代理低 23 个百分点。
+
+\textbf{Visual Distribution Shift}：D 的桌面纹理与布局未出现在 B-only 训练中，策略过度依赖环境 B 的视觉 cues；ABC 见过 A/B/C 三套场景，学到更通用的「图像--动作」映射，因此在 D 上 episode 均值 L1 由 0.216 降至 0.181，Success Rate 代理由 74\% 升至 97\%。
+
+\textbf{Action Chunking（图~\ref{fig:horizon}）}：随 horizon 增大，B-only 的 L1 由 0.70 缓升后在 horizon ${>}40$ 加速至 ${\sim}0.75$，说明 chunk 后半段预测与首步偏离加剧，长程执行易累积误差；ABC 全程在 0.58--0.65 窄幅波动，chunk 内后续步更可靠。结合表~\ref{tab:task2_eval}，ABC 在略高的训练 loss 下换取了更好的分布外泛化与更稳的动作块预测，符合多环境联合训练的设计初衷。
+
+\section{讨论与局限}
+\label{sec:discussion}
+
+\textbf{题目一}：B/C 依赖 AIGC mesh 质量；物体 C 单视图导致后脑几何歧义（融合中可见局部凹陷）；位姿需在 \texttt{task1.yaml} 中手调；全高斯融合对 B/C 点云朝向敏感，需 \texttt{fix\_gaussian\_ply\_upright.py} 校正。
+
+\textbf{题目二}：离线 L1 为代理指标，非仿真 Success Rate；未报告真实机器人 roll-out。
+
+\section{结论}
+\label{sec:conclusion}
+
+题目一实现了多源资产到统一 2DGS 表示的融合渲染；题目二表明 ABC 联合 ACT 在环境 D 零样本场景显著优于 B-only，且 Action Chunking 长程误差增长更缓。
+
+\section*{提交信息}
+\noindent
+\textbf{GitHub}：\url{【Public Repo URL】}\\
+\textbf{模型权重}：\url{【网盘链接，提取码：****】}\\
+\textbf{融合视频}：\texttt{Task1/outputs/fusion/wander.mp4}\\
+\textbf{ACT Checkpoint}：\texttt{Task2/outputs/train/*/checkpoints/050000/}
+
+{\small
+\bibliographystyle{ieee}
+\bibliography{refs}
+}
+
+\end{document}

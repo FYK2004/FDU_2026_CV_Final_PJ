@@ -1,0 +1,40 @@
+# === 实验输出（不上传）===
+Task1/outputs/
+Task2/outputs/
+
+# === 第三方仓库（Task1/scripts/setup.sh 克隆）===
+Task1/external/
+
+# === 大数据（按 README 下载）===
+Task1/data/object_a/images/*
+!Task1/data/object_a/images/.gitkeep
+Task1/data/background/**
+!Task1/data/background/bicycle/images/.gitkeep
+Task2/data/
+
+# object_c 小文件（~1MB）保留在仓库内
+
+# === 模型权重 / 缓存 ===
+*.ckpt
+*.pth
+*.safetensors
+wandb/
+__pycache__/
+*.pyc
+.env
+.DS_Store
+
+# === 报告编译产物与实验插图 ===
+report/*.pdf
+report/*.aux
+report/*.log
+report/*.out
+report/*.bbl
+report/*.blg
+report/*.synctex.gz
+report/figures/
+
+# === 本地文件 ===
+.cursor/
+*.swp
+HW3_计算机视觉.pdf

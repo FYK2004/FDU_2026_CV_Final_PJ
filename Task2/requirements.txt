@@ -1,0 +1,13 @@
+# Task2：LeRobot ACT + CALVIN 跨环境泛化
+# 安装: bash scripts/setup.sh && conda activate task2-lerobot
+
+lerobot>=0.3.0
+torch>=2.0
+torchvision
+wandb
+pyyaml
+huggingface_hub
+datasets
+av
+termcolor
+matplotlib

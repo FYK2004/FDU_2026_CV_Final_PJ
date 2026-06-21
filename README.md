@@ -8,8 +8,7 @@ GitHub: https://github.com/FYK2004/FDU_2026_CV_Final_PJ
 ```
 final_pj/
 ├── Task1/          # 题目一
-├── Task2/          # 题目二
-└── report/         # 实验报告（LaTeX）
+└── Task2/          # 题目二
 ```
 
 ## Requirements
